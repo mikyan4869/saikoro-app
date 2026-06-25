@@ -21,10 +21,35 @@
         label { display: block; margin-bottom: 5px; font-weight: bold; }
         input, select { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
         .dice-display { font-size: 40px; text-align: center; margin: 15px 0; letter-spacing: 10px; }
-        .history-box { background: #ecf0f1; padding: 15px; border-radius: 5px; margin-top: 20px; max-height: 200px; overflow-y: auto; }
         .history-item { border-bottom: 1px solid #bdc3c7; padding: 5px 0; font-size: 14px; }
         .latest-others { background: #e8f8f5; padding: 15px; border-radius: 5px; margin-top: 20px; border-left: 5px solid #1abc9c; }
         #connection-status { text-align: center; font-size: 12px; color: #e74c3c; margin-bottom: 10px; }
+
+        /* ▼ チームごとの履歴用のデザイン追加 ▼ */
+        .team-histories-wrapper {
+            display: flex;
+            gap: 10px;
+            overflow-x: auto; /* チームが多い場合は横スクロール */
+            margin-top: 20px;
+            padding-bottom: 10px;
+        }
+        .team-history-col {
+            flex: 1;
+            min-width: 140px;
+            background: #ecf0f1;
+            padding: 10px;
+            border-radius: 5px;
+            max-height: 250px;
+            overflow-y: auto;
+        }
+        .team-history-col h4 {
+            text-align: center;
+            margin-top: 0;
+            margin-bottom: 10px;
+            color: #2c3e50;
+            border-bottom: 2px solid #bdc3c7;
+            padding-bottom: 5px;
+        }
     </style>
 </head>
 <body>
@@ -58,7 +83,7 @@
         </div>
         <div class="form-group">
             <label for="rep-password">代表者パスワード:</label>
-            <input type="password" id="rep-password" placeholder="代表者は 9999 を入力（空欄なら観戦）">
+            <input type="password" id="rep-password" placeholder="代表者はパスワードを入力（空欄なら観戦）">
             <small style="color:#7f8c8d;">※代表者はサイコロを振れます。それ以外は観戦モードになります。</small>
         </div>
         <button onclick="login()">ログイン</button>
@@ -90,23 +115,20 @@
             <div id="others-latest-list"></div>
         </div>
 
-        <div class="history-box">
-            <h3>全チームの履歴</h3>
-            <div id="history-list"></div>
+        <div>
+            <h3 style="margin-bottom: 5px;">各チームの履歴</h3>
+            <div id="team-histories-container" class="team-histories-wrapper"></div>
         </div>
 
-        <button class="secondary" onclick="logout()">ログアウト</button>
+        <button class="secondary" onclick="logout()" style="margin-top: 30px;">ログアウト</button>
     </div>
 </div>
 
 <script>
-    // ==========================================
-    // ユーザー設定済みのFirebase構成
-    // ==========================================
     const firebaseConfig = {
         apiKey: "AIzaSyAmbaUhi6D7vVtQknlFgJapRZc0FJyugzg",
         authDomain: "saikoro-6ff51.firebaseapp.com",
-        databaseURL: "https://saikoro-6ff51-default-rtdb.firebaseio.com", // ★ここを追加しました
+        databaseURL: "https://saikoro-6ff51-default-rtdb.firebaseio.com", // ★前の手順でコピーしたURLに上書きしてください
         projectId: "saikoro-6ff51",
         storageBucket: "saikoro-6ff51.firebasestorage.app",
         messagingSenderId: "308180257519",
@@ -114,7 +136,6 @@
         measurementId: "G-TY3G041227"
     };
 
-    // Firebase初期化
     let db;
     if (firebaseConfig.apiKey !== "YOUR_API_KEY") {
         firebase.initializeApp(firebaseConfig);
@@ -123,43 +144,37 @@
         document.getElementById('connection-status').style.color = "#2ecc71";
     }
 
-    // --- 状態管理 ---
     let myTeam = '';
     let isRepresentative = false;
     let globalTeamCount = 2;
     let globalHistory = [];
 
-    // --- Firebase リアルタイム同期リスナー ---
     if (db) {
-        // チーム数の同期
         db.ref('admin/teamCount').on('value', (snapshot) => {
             const count = snapshot.val();
             if (count) {
                 globalTeamCount = count;
                 document.getElementById('team-count').value = count;
+                if(myTeam) updateUI(); // チーム数変更時にも再描画
             }
         });
 
-        // 履歴の同期
         db.ref('history').on('value', (snapshot) => {
             const data = snapshot.val();
             if (data) {
-                // Firebaseから取得したデータを配列にし、新しい順に並び替え
                 globalHistory = Object.values(data).sort((a, b) => b.timestamp - a.timestamp);
             } else {
                 globalHistory = [];
             }
-            updateUI(); // 画面を更新
+            updateUI();
         });
     }
 
-    // --- 画面遷移 ---
     function showScreen(screenId) {
         document.querySelectorAll('.screen').forEach(el => el.classList.remove('active'));
         document.getElementById(screenId).classList.add('active');
     }
 
-    // --- 管理者機能 ---
     function goToAdmin() {
         const adminPassword = prompt("管理者用パスワードを入力してください。");
         if (adminPassword === "8888") {
@@ -188,7 +203,6 @@
         }
     }
 
-    // --- ログイン機能 ---
     function prepareLogin() {
         const select = document.getElementById('team-select');
         select.innerHTML = '';
@@ -205,7 +219,6 @@
         const password = document.getElementById('rep-password').value;
         
         isRepresentative = (password === "9999");
-        
         document.getElementById('team-title').innerText = `${myTeam} ${isRepresentative ? '(代表者)' : '(観戦)'}`;
         
         if (isRepresentative) {
@@ -227,7 +240,6 @@
         showScreen('home-screen');
     }
 
-    // --- サイコロ機能 ---
     function rollDice() {
         const count = parseInt(document.getElementById('dice-count').value);
         if (!confirm(`${count}個のサイコロを振ります。よろしいですか？`)) return;
@@ -244,10 +256,8 @@
             emojiStr += faces[roll - 1];
         }
 
-        // 自分の画面用
         document.getElementById('my-latest-roll').innerHTML = emojiStr + `<br><span style="font-size:20px;">合計: ${total}</span>`;
 
-        // Firebaseへ保存（自動で全画面へ同期される）
         if (db) {
             const newRecord = {
                 team: myTeam,
@@ -255,26 +265,16 @@
                 rolls: results,
                 emoji: emojiStr,
                 total: total,
-                timeString: new Date().toLocaleTimeString(),
-                timestamp: firebase.database.ServerValue.TIMESTAMP // サーバーの正確な時間
+                timeString: new Date().toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit', second:'2-digit' }),
+                timestamp: firebase.database.ServerValue.TIMESTAMP
             };
             db.ref('history').push(newRecord);
         }
     }
 
-    // --- UI更新機能 ---
+    // ▼ 変更点：履歴をチームごとに描画する処理 ▼
     function updateUI() {
-        const historyList = document.getElementById('history-list');
-        historyList.innerHTML = '';
-        
-        globalHistory.forEach(record => {
-            historyList.innerHTML += `
-                <div class="history-item">
-                    <strong>${record.team}</strong>: ${record.emoji} (合計: ${record.total}) <span style="color:#7f8c8d; font-size:12px;">[${record.timeString}]</span>
-                </div>
-            `;
-        });
-
+        // --- 1. 他チームの最新の出目 ---
         const othersLatestList = document.getElementById('others-latest-list');
         othersLatestList.innerHTML = '';
         
@@ -296,10 +296,42 @@
                 `;
             }
         }
-        
         if (!hasOthers && myTeam) {
             othersLatestList.innerHTML = '<p style="color:#7f8c8d; font-size: 14px;">まだ他チームの記録がありません。</p>';
         }
+
+        // --- 2. 各チームの履歴を列ごとに分ける ---
+        const historyContainer = document.getElementById('team-histories-container');
+        historyContainer.innerHTML = ''; // 一度クリア
+
+        // Aチーム, Bチーム... のリストを作る
+        const teams = [];
+        for (let i = 0; i < globalTeamCount; i++) {
+            teams.push(String.fromCharCode(65 + i) + 'チーム');
+        }
+
+        // 各チームごとに列(HTML)を作って追加
+        teams.forEach(teamName => {
+            const teamHistory = globalHistory.filter(record => record.team === teamName);
+            
+            let html = `<div class="team-history-col"><h4>${teamName}</h4>`;
+            
+            if (teamHistory.length === 0) {
+                html += `<div style="font-size:12px; color:#7f8c8d; text-align:center; padding: 10px;">記録なし</div>`;
+            } else {
+                teamHistory.forEach(record => {
+                    html += `
+                        <div class="history-item">
+                            <span style="font-size:18px;">${record.emoji}</span>
+                            (計: ${record.total}) <br>
+                            <span style="color:#7f8c8d; font-size:11px;">${record.timeString}</span>
+                        </div>
+                    `;
+                });
+            }
+            html += `</div>`;
+            historyContainer.innerHTML += html;
+        });
     }
 </script>
 </body>
