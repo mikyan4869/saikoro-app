@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>リアルタイム対戦サイコロアプリ</title>
+    <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-database-compat.js"></script>
+    
+    <style>
+        body { font-family: 'Helvetica Neue', Arial, sans-serif; background-color: #f4f7f6; color: #333; margin: 0; padding: 20px; }
+        .container { max-width: 600px; margin: 0 auto; background: #fff; padding: 20px 30px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        h1, h2, h3 { text-align: center; color: #2c3e50; }
+        .screen { display: none; }
+        .screen.active { display: block; }
+        button { background-color: #3498db; color: #fff; border: none; padding: 10px 20px; margin: 10px 0; border-radius: 5px; cursor: pointer; width: 100%; font-size: 16px; }
+        button:hover { background-color: #2980b9; }
+        button.secondary { background-color: #95a5a6; }
+        button.secondary:hover { background-color: #7f8c8d; }
+        .form-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; font-weight: bold; }
+        input, select { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
+        .dice-display { font-size: 40px; text-align: center; margin: 15px 0; letter-spacing: 10px; }
+        .history-box { background: #ecf0f1; padding: 15px; border-radius: 5px; margin-top: 20px; max-height: 200px; overflow-y: auto; }
+        .history-item { border-bottom: 1px solid #bdc3c7; padding: 5px 0; font-size: 14px; }
+        .latest-others { background: #e8f8f5; padding: 15px; border-radius: 5px; margin-top: 20px; border-left: 5px solid #1abc9c; }
+        #connection-status { text-align: center; font-size: 12px; color: #e74c3c; margin-bottom: 10px; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div id="connection-status">データベース未接続（設定を確認してください）</div>
+
+    <div id="home-screen" class="screen active">
+        <h1>サイコロアプリ🎲</h1>
+        <p style="text-align:center;">役割を選択してください。</p>
+        <button onclick="goToAdmin()">管理者ページ</button>
+        <button onclick="prepareLogin()">参加者ログイン</button>
+    </div>
+
+    <div id="admin-screen" class="screen">
+        <h2>管理者設定</h2>
+        <div class="form-group">
+            <label for="team-count">参加チーム数:</label>
+            <input type="number" id="team-count" min="2" max="10" value="2">
+        </div>
+        <button onclick="saveAdminSettings()">設定を保存</button>
+        <button class="secondary" onclick="showScreen('home-screen')">ホームに戻る</button>
+        <button class="secondary" style="background-color: #e74c3c;" onclick="resetData()">全データリセット</button>
+    </div>
+
+    <div id="login-screen" class="screen">
+        <h2>参加者ログイン</h2>
+        <div class="form-group">
+            <label for="team-select">チームを選択:</label>
+            <select id="team-select"></select>
+        </div>
+        <div class="form-group">
+            <label for="rep-password">代表者パスワード:</label>
+            <input type="password" id="rep-password" placeholder="代表者は 9999 を入力（空欄なら観戦）">
+            <small style="color:#7f8c8d;">※代表者はサイコロを振れます。それ以外は観戦モードになります。</small>
+        </div>
+        <button onclick="login()">ログイン</button>
+        <button class="secondary" onclick="showScreen('home-screen')">ホームに戻る</button>
+    </div>
+
+    <div id="dice-screen" class="screen">
+        <h2 id="team-title">チーム画面</h2>
+        
+        <div id="dice-controls" style="display: none; background: #fff3cd; padding: 15px; border-radius: 5px; margin-bottom: 20px;">
+            <div class="form-group">
+                <label for="dice-count">振るサイコロの数 (最大3個):</label>
+                <select id="dice-count">
+                    <option value="1">1個</option>
+                    <option value="2">2個</option>
+                    <option value="3">3個</option>
+                </select>
+            </div>
+            <button onclick="rollDice()" style="background-color: #e67e22;">サイコロを振る！</button>
+        </div>
+        <div id="viewer-message" style="display: none; text-align: center; color: #7f8c8d; margin-bottom: 20px;">
+            あなたは観戦モードです（代表者のみサイコロを振れます）。
+        </div>
+
+        <div id="my-latest-roll" class="dice-display"></div>
+
+        <div class="latest-others">
+            <h3>他チームの最新の出目</h3>
+            <div id="others-latest-list"></div>
+        </div>
+
+        <div class="history-box">
+            <h3>全チームの履歴</h3>
+            <div id="history-list"></div>
+        </div>
+
+        <button class="secondary" onclick="logout()">ログアウト</button>
+    </div>
+</div>
+
+<script>
+    // ==========================================
+    // ユーザー設定済みのFirebase構成
+    // ==========================================
+    const firebaseConfig = {
+        apiKey: "AIzaSyAmbaUhi6D7vVtQknlFgJapRZc0FJyugzg",
+        authDomain: "saikoro-6ff51.firebaseapp.com",
+        databaseURL: "https://saikoro-6ff51-default-rtdb.firebaseio.com", // ★ここを追加しました
+        projectId: "saikoro-6ff51",
+        storageBucket: "saikoro-6ff51.firebasestorage.app",
+        messagingSenderId: "308180257519",
+        appId: "1:308180257519:web:62832f6b8adb5f8dfae91a",
+        measurementId: "G-TY3G041227"
+    };
+
+    // Firebase初期化
+    let db;
+    if (firebaseConfig.apiKey !== "YOUR_API_KEY") {
+        firebase.initializeApp(firebaseConfig);
+        db = firebase.database();
+        document.getElementById('connection-status').innerText = "🟢 データベース接続済み";
+        document.getElementById('connection-status').style.color = "#2ecc71";
+    }
+
+    // --- 状態管理 ---
+    let myTeam = '';
+    let isRepresentative = false;
+    let globalTeamCount = 2;
+    let globalHistory = [];
+
+    // --- Firebase リアルタイム同期リスナー ---
+    if (db) {
+        // チーム数の同期
+        db.ref('admin/teamCount').on('value', (snapshot) => {
+            const count = snapshot.val();
+            if (count) {
+                globalTeamCount = count;
+                document.getElementById('team-count').value = count;
+            }
+        });
+
+        // 履歴の同期
+        db.ref('history').on('value', (snapshot) => {
+            const data = snapshot.val();
+            if (data) {
+                // Firebaseから取得したデータを配列にし、新しい順に並び替え
+                globalHistory = Object.values(data).sort((a, b) => b.timestamp - a.timestamp);
+            } else {
+                globalHistory = [];
+            }
+            updateUI(); // 画面を更新
+        });
+    }
+
+    // --- 画面遷移 ---
+    function showScreen(screenId) {
+        document.querySelectorAll('.screen').forEach(el => el.classList.remove('active'));
+        document.getElementById(screenId).classList.add('active');
+    }
+
+    // --- 管理者機能 ---
+    function goToAdmin() {
+        const adminPassword = prompt("管理者用パスワードを入力してください。");
+        if (adminPassword === "8888") {
+            showScreen('admin-screen');
+        } else if (adminPassword !== null) {
+            alert("パスワードが正しくありません。");
+        }
+    }
+
+    function saveAdminSettings() {
+        const count = parseInt(document.getElementById('team-count').value);
+        if (db) {
+            db.ref('admin/teamCount').set(count);
+            alert(`参加チーム数を${count}チームに設定し、同期しました。`);
+        }
+        showScreen('home-screen');
+    }
+
+    function resetData() {
+        if(confirm("全履歴と設定を初期化します。全ユーザーの画面から消えますがよろしいですか？")) {
+            if (db) {
+                db.ref('history').remove();
+                db.ref('admin/teamCount').set(2);
+                alert("リセットしました。");
+            }
+        }
+    }
+
+    // --- ログイン機能 ---
+    function prepareLogin() {
+        const select = document.getElementById('team-select');
+        select.innerHTML = '';
+        for (let i = 0; i < globalTeamCount; i++) {
+            const teamName = String.fromCharCode(65 + i) + 'チーム';
+            select.innerHTML += `<option value="${teamName}">${teamName}</option>`;
+        }
+        document.getElementById('rep-password').value = '';
+        showScreen('login-screen');
+    }
+
+    function login() {
+        myTeam = document.getElementById('team-select').value;
+        const password = document.getElementById('rep-password').value;
+        
+        isRepresentative = (password === "9999");
+        
+        document.getElementById('team-title').innerText = `${myTeam} ${isRepresentative ? '(代表者)' : '(観戦)'}`;
+        
+        if (isRepresentative) {
+            document.getElementById('dice-controls').style.display = 'block';
+            document.getElementById('viewer-message').style.display = 'none';
+        } else {
+            document.getElementById('dice-controls').style.display = 'none';
+            document.getElementById('viewer-message').style.display = 'block';
+        }
+
+        updateUI();
+        showScreen('dice-screen');
+    }
+
+    function logout() {
+        myTeam = '';
+        isRepresentative = false;
+        document.getElementById('my-latest-roll').innerHTML = '';
+        showScreen('home-screen');
+    }
+
+    // --- サイコロ機能 ---
+    function rollDice() {
+        const count = parseInt(document.getElementById('dice-count').value);
+        if (!confirm(`${count}個のサイコロを振ります。よろしいですか？`)) return;
+
+        const faces = ['⚀', '⚁', '⚂', '⚃', '⚄', '⚅'];
+        let results = [];
+        let total = 0;
+        let emojiStr = '';
+
+        for (let i = 0; i < count; i++) {
+            const roll = Math.floor(Math.random() * 6) + 1;
+            results.push(roll);
+            total += roll;
+            emojiStr += faces[roll - 1];
+        }
+
+        // 自分の画面用
+        document.getElementById('my-latest-roll').innerHTML = emojiStr + `<br><span style="font-size:20px;">合計: ${total}</span>`;
+
+        // Firebaseへ保存（自動で全画面へ同期される）
+        if (db) {
+            const newRecord = {
+                team: myTeam,
+                diceCount: count,
+                rolls: results,
+                emoji: emojiStr,
+                total: total,
+                timeString: new Date().toLocaleTimeString(),
+                timestamp: firebase.database.ServerValue.TIMESTAMP // サーバーの正確な時間
+            };
+            db.ref('history').push(newRecord);
+        }
+    }
+
+    // --- UI更新機能 ---
+    function updateUI() {
+        const historyList = document.getElementById('history-list');
+        historyList.innerHTML = '';
+        
+        globalHistory.forEach(record => {
+            historyList.innerHTML += `
+                <div class="history-item">
+                    <strong>${record.team}</strong>: ${record.emoji} (合計: ${record.total}) <span style="color:#7f8c8d; font-size:12px;">[${record.timeString}]</span>
+                </div>
+            `;
+        });
+
+        const othersLatestList = document.getElementById('others-latest-list');
+        othersLatestList.innerHTML = '';
+        
+        const latestByTeam = {};
+        globalHistory.forEach(record => {
+            if (!latestByTeam[record.team]) {
+                latestByTeam[record.team] = record;
+            }
+        });
+
+        let hasOthers = false;
+        for (const [team, record] of Object.entries(latestByTeam)) {
+            if (team !== myTeam) {
+                hasOthers = true;
+                othersLatestList.innerHTML += `
+                    <div style="margin-bottom: 10px;">
+                        <strong>${team}</strong>: <span style="font-size: 24px;">${record.emoji}</span> (合計: ${record.total}) <span style="color:#7f8c8d; font-size:12px;">[${record.timeString}]</span>
+                    </div>
+                `;
+            }
+        }
+        
+        if (!hasOthers && myTeam) {
+            othersLatestList.innerHTML = '<p style="color:#7f8c8d; font-size: 14px;">まだ他チームの記録がありません。</p>';
+        }
+    }
+</script>
+</body>
+</html>
